@@ -142,14 +142,61 @@ const setFlyingLines = () => {
   flyingLines = [];
   flyingLineMaterials = [];
 
-  // 加载arc-texture纹理
+  // 创建程序化纹理作为备用
+  const createGradientTexture = () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 256;
+    canvas.height = 32;
+    const ctx = canvas.getContext("2d");
+
+    // 创建渐变
+    const gradient = ctx.createLinearGradient(0, 0, 256, 0);
+    gradient.addColorStop(0, "rgba(255, 255, 255, 0)");
+    gradient.addColorStop(0.3, "rgba(255, 255, 255, 0.8)");
+    gradient.addColorStop(0.7, "rgba(255, 255, 255, 0.8)");
+    gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
+
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 256, 32);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+    return texture;
+  };
+
+  // 加载arc-texture纹理，如果失败则使用程序化纹理
   const textureLoader = new THREE.TextureLoader();
+  const gradientTexture = createGradientTexture();
+
   const arcTextures = [
-    textureLoader.load("img/arc-texture-1.png"),
-    textureLoader.load("img/arc-texture-2.png"),
-    textureLoader.load("img/arc-texture-3.png"),
-    textureLoader.load("img/arc-texture-4.png"),
+    gradientTexture, // 使用程序化纹理作为主要纹理
+    gradientTexture,
+    gradientTexture,
+    gradientTexture,
   ];
+
+  // 尝试加载外部纹理（如果存在的话）
+  const tryLoadTexture = (url, index) => {
+    textureLoader.load(
+      url,
+      (texture) => {
+        arcTextures[index] = texture;
+        console.log(`Loaded texture: ${url}`);
+      },
+      undefined,
+      (error) => {
+        console.log(
+          `Failed to load texture: ${url}, using gradient texture instead`
+        );
+      }
+    );
+  };
+
+  tryLoadTexture("img/arc-texture-1.png", 0);
+  tryLoadTexture("img/arc-texture-2.png", 1);
+  tryLoadTexture("img/arc-texture-3.png", 2);
+  tryLoadTexture("img/arc-texture-4.png", 3);
 
   // 飞线的顶点着色器 - 两阶段动画效果
   const flyingLineVertex = `
@@ -160,6 +207,8 @@ const setFlyingLines = () => {
     varying vec2 vUv;
     varying float vProgress;
     varying float vVisibility;
+    varying float vAnimationProgress;
+    varying float vAnimationPhase;
     
     void main() {
       vUv = uv;
@@ -170,58 +219,95 @@ const setFlyingLines = () => {
       float cycle = mod(time + animationPhase, cycleDuration);
       
       float visibility = 0.0;
+      float animationProgress = 0.0;
+      float phase = 0.0; // 0 = 延伸阶段, 1 = 收回阶段
       
       if (cycle < 3.0) {
         // 第一阶段：从起点延伸到终点（0-3秒）
-        float animatedProgress = cycle / 3.0; // 0到1
-        if (progress <= animatedProgress) {
+        animationProgress = cycle / 3.0; // 0到1
+        phase = 0.0;
+        if (progress <= animationProgress) {
           visibility = 1.0;
           // 头部渐变效果，让线条前端有柔和的渐变
-          float headDistance = animatedProgress - progress;
+          float headDistance = animationProgress - progress;
           float headFade = 1.0 - smoothstep(0.0, 0.1, headDistance);
           visibility *= (0.6 + headFade * 0.8); // 基础亮度0.6，头部最亮1.4
         }
       } else {
         // 第二阶段：保持连接状态，从起点收回到终点（3-6秒）
-        float retractProgress = (cycle - 3.0) / 3.0; // 0到1，表示收回的进度
-        if (progress >= retractProgress) {
+        animationProgress = (cycle - 3.0) / 3.0; // 0到1，表示收回的进度
+        phase = 1.0;
+        if (progress >= animationProgress) {
           visibility = 1.0;
           // 收回前端的渐变效果
-          float retractDistance = progress - retractProgress;
+          float retractDistance = progress - animationProgress;
           float retractFade = 1.0 - smoothstep(0.0, 0.1, retractDistance);
           visibility *= (0.6 + retractFade * 0.8); // 基础亮度0.6，收回前端最亮1.4
         }
       }
       
       vVisibility = visibility;
+      vAnimationProgress = animationProgress;
+      vAnimationPhase = phase;
       
       gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
     }
   `;
 
-  // 飞线的片段着色器 - 优化的视觉效果
+  // 飞线的片段着色器 - 动态纹理渐变效果
   const flyingLineFragment = `
     varying vec2 vUv;
     varying float vProgress;
     varying float vVisibility;
+    varying float vAnimationProgress;
+    varying float vAnimationPhase;
     uniform vec3 color;
     uniform sampler2D arcTexture;
+    uniform float time;
     
     void main() {
       // 如果不可见则丢弃像素
       if (vVisibility < 0.01) discard;
       
-      // 采样纹理
-      vec4 textureColor = texture2D(arcTexture, vUv);
+      // 创建动态纹理坐标
+      vec2 dynamicUv = vUv;
       
-      // 添加边缘柔化效果，让线条边缘更平滑
+      if (vAnimationPhase < 0.5) {
+        // 延伸阶段：纹理跟随动画前端移动
+        float textureOffset = vAnimationProgress - 0.3; // 纹理稍微滞后于动画前端
+        dynamicUv.x = (vUv.x - textureOffset) * 3.0; // 拉伸纹理，让渐变更明显
+      } else {
+        // 收回阶段：纹理跟随收回前端移动
+        float textureOffset = vAnimationProgress + 0.3; // 纹理稍微超前于收回前端
+        dynamicUv.x = (vUv.x - textureOffset) * 3.0;
+      }
+      
+      // 采样纹理
+      vec4 textureColor = texture2D(arcTexture, dynamicUv);
+      
+      // 添加边缘柔化效果
       float edgeFade = smoothstep(0.0, 0.3, vUv.y) * smoothstep(1.0, 0.7, vUv.y);
       
-      // 结合纹理和颜色
-      vec3 finalColor = mix(textureColor.rgb, color, 1.0);
-      finalColor *= 1.0; // 大幅增加亮度让线条更明显
+      // 创建流动的渐变效果
+      float flowGradient = 1.0;
+      if (vAnimationPhase < 0.5) {
+        // 延伸阶段：从起点到当前动画位置的渐变
+        float distanceFromHead = abs(vProgress - vAnimationProgress);
+        flowGradient = 1.0 - smoothstep(0.0, 0.2, distanceFromHead);
+      } else {
+        // 收回阶段：从收回前端到终点的渐变
+        float distanceFromTail = abs(vProgress - vAnimationProgress);
+        flowGradient = 1.0 - smoothstep(0.0, 0.2, distanceFromTail);
+      }
       
-      float finalAlpha = textureColor.a * vVisibility * edgeFade;
+      // 增强纹理效果
+      float textureIntensity = textureColor.r;
+      
+      // 结合纹理、颜色和流动渐变
+      vec3 finalColor = color * (0.3 + textureIntensity * 0.7 + flowGradient * 1.0);
+      
+      // 动态透明度
+      float finalAlpha = max(textureColor.a, 0.2) * vVisibility * edgeFade * (0.5 + flowGradient * 0.5);
       
       gl_FragColor = vec4(finalColor, finalAlpha);
     }
