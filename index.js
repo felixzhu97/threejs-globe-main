@@ -185,40 +185,25 @@ const setFlyingLines = () => {
     }
   `;
 
-  // 端点圆心的顶点着色器
+  // 端点标记的顶点着色器
   const endPointVertex = `
     #ifdef GL_ES
     precision mediump float;
     #endif
     
-    uniform float time;
-    uniform float cycleTime;
-    uniform float opacity;
-    
-    varying float vOpacity;
-    
     void main() {
-      // 计算循环透明度 - 简化逻辑确保可见性
-      float cycle = mod(time * 0.5, cycleTime);
-      float normalizedCycle = cycle / cycleTime;
-      
-      // 创建脉冲效果
-      float pulse = sin(normalizedCycle * 6.28318) * 0.5 + 0.5;
-      vOpacity = opacity * (0.3 + pulse * 0.7);
-      
       gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-      gl_PointSize = 12.0;
+      gl_PointSize = 20.0;
     }
   `;
 
-  // 端点圆心的片段着色器
+  // 端点标记的片段着色器 - 圆心和圆环
   const endPointFragment = `
     #ifdef GL_ES
     precision mediump float;
     #endif
     
     uniform vec3 color;
-    varying float vOpacity;
     
     void main() {
       vec2 center = vec2(0.5, 0.5);
@@ -226,9 +211,16 @@ const setFlyingLines = () => {
       
       if (dist > 0.5) discard;
       
-      // 创建渐变圆形效果
-      float alpha = (1.0 - dist * 2.0) * vOpacity;
-      alpha = smoothstep(0.0, 1.0, alpha);
+      float normalizedDist = dist * 2.0; // 0-1范围
+      
+      // 内圆心 - 实心
+      float innerCircle = 1.0 - smoothstep(0.0, 0.3, normalizedDist);
+      
+      // 外圆环
+      float outerRing = smoothstep(0.6, 0.7, normalizedDist) * (1.0 - smoothstep(0.9, 1.0, normalizedDist));
+      
+      // 组合两层
+      float alpha = innerCircle + outerRing * 0.8;
       
       gl_FragColor = vec4(color, alpha);
     }
@@ -284,35 +276,88 @@ const setFlyingLines = () => {
     return new THREE.Vector3(x, y, z);
   };
 
-  // 创建端点圆心
-  const createEndPoint = (position, color, cycleTime) => {
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute(
-      "position",
-      new THREE.Float32BufferAttribute([position.x, position.y, position.z], 3)
-    );
+  // 计算地球表面位置（用于端点圆心）
+  const latLonToSurfaceVector3 = (lat, lon, radius = 19.6) => {
+    const phi = (90 - lat) * (Math.PI / 180);
+    const theta = (lon + 180) * (Math.PI / 180);
+
+    const x = -(radius * Math.sin(phi) * Math.cos(theta));
+    const z = radius * Math.sin(phi) * Math.sin(theta);
+    const y = radius * Math.cos(phi);
+
+    return new THREE.Vector3(x, y, z);
+  };
+
+  // 创建端点标记 - 贴在地球表面
+  const createEndPoint = (latLon, color, cycleTime) => {
+    // 使用地球表面位置
+    const surfacePosition = latLonToSurfaceVector3(latLon.lat, latLon.lon);
+
+    // 创建一个平面几何体
+    const geometry = new THREE.PlaneGeometry(1.5, 1.5);
 
     const material = new THREE.ShaderMaterial({
       uniforms: {
-        time: { value: 0 },
-        cycleTime: { value: cycleTime || 4.0 },
-        opacity: { value: 1.0 },
         color: { value: color },
       },
-      vertexShader: endPointVertex,
-      fragmentShader: endPointFragment,
+      vertexShader: `
+        #ifdef GL_ES
+        precision mediump float;
+        #endif
+        
+        varying vec2 vUv;
+        
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        #ifdef GL_ES
+        precision mediump float;
+        #endif
+        
+        uniform vec3 color;
+        varying vec2 vUv;
+        
+        void main() {
+          vec2 center = vec2(0.5, 0.5);
+          float dist = distance(vUv, center);
+          
+          if (dist > 0.5) discard;
+          
+          float normalizedDist = dist * 2.0; // 0-1范围
+          
+          // 内圆心 - 实心
+          float innerCircle = 1.0 - smoothstep(0.0, 0.3, normalizedDist);
+          
+          // 外圆环
+          float outerRing = smoothstep(0.6, 0.7, normalizedDist) * (1.0 - smoothstep(0.9, 1.0, normalizedDist));
+          
+          // 组合两层
+          float alpha = innerCircle + outerRing * 0.8;
+          
+          gl_FragColor = vec4(color, alpha);
+        }
+      `,
       transparent: true,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
+      side: THREE.DoubleSide,
     });
 
-    flyingLineMaterials.push(material);
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.position.copy(surfacePosition);
 
-    const point = new THREE.Points(geometry, material);
-    scene.add(point);
-    flyingLines.push(point);
+    // 计算地球表面的法向量（从球心指向表面点）
+    const normal = surfacePosition.clone().normalize();
 
-    return point;
+    // 让平面的法向量与地球表面的法向量一致
+    mesh.lookAt(surfacePosition.clone().add(normal));
+
+    scene.add(mesh);
+
+    return mesh;
   };
 
   // 创建飞线
@@ -366,9 +411,9 @@ const setFlyingLines = () => {
     scene.add(line);
     flyingLines.push(line);
 
-    // 创建起点和终点的圆心
-    createEndPoint(startPos, color, cycleTime);
-    createEndPoint(endPos, color, cycleTime);
+    // 创建起点和终点的标记
+    createEndPoint(startLatLon, color, cycleTime);
+    createEndPoint(endLatLon, color, cycleTime);
   };
 
   // 添加一些示例飞线
@@ -614,6 +659,8 @@ const render = () => {
       material.uniforms.time.value += 0.01;
     });
   }
+
+  // 端点现在保持与地球表面一致的角度，不需要动态更新朝向
 
   controls.update();
   renderer.render(scene, camera);
