@@ -1,6 +1,80 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
+// ==================== 配置区域 ====================
+
+// 飞线路由配置
+const FLYING_LINE_ROUTES = [
+  // 北京到纽约
+  {
+    start: { lat: 39.9042, lon: 116.4074 },
+    end: { lat: 40.7128, lon: -74.006 },
+  },
+  // 伦敦到东京
+  {
+    start: { lat: 51.5074, lon: -0.1278 },
+    end: { lat: 35.6762, lon: 139.6503 },
+  },
+  // 悉尼到洛杉矶
+  {
+    start: { lat: -33.8688, lon: 151.2093 },
+    end: { lat: 34.0522, lon: -118.2437 },
+  },
+  // 巴黎到上海
+  {
+    start: { lat: 48.8566, lon: 2.3522 },
+    end: { lat: 31.2304, lon: 121.4737 },
+  },
+  // 迪拜到新加坡
+  {
+    start: { lat: 25.2048, lon: 55.2708 },
+    end: { lat: 1.3521, lon: 103.8198 },
+  },
+  // 圣保罗到开普敦
+  {
+    start: { lat: -23.5505, lon: -46.6333 },
+    end: { lat: -33.9249, lon: 18.4241 },
+  },
+];
+
+// 飞线颜色配置
+const FLYING_LINE_COLORS = [
+  new THREE.Vector3(0.3, 0.8, 1.0), // 蓝色
+  new THREE.Vector3(1.0, 0.5, 0.3), // 橙色
+  new THREE.Vector3(0.5, 1.0, 0.3), // 绿色
+  new THREE.Vector3(1.0, 0.3, 0.8), // 粉色
+  new THREE.Vector3(0.8, 0.8, 0.3), // 黄色
+  new THREE.Vector3(0.6, 0.3, 1.0), // 紫色
+];
+
+// 圆心点配置
+const ENDPOINT_CONFIG = {
+  size: 0.5,           // 端点大小
+  textureUrl: "img/disc_texture.png", // 端点纹理
+};
+
+// 地图点配置
+const MAP_DOTS_CONFIG = {
+  sphereRadius: 20,    // 地球半径
+  dotRadius: 0.1,      // 地图点半径
+  dotSegments: 5,      // 地图点分段数
+  dotDensity: 2.5,     // 地图点密度
+  worldTextureUrl: "img/world_alpha_mini.jpg", // 世界地图纹理
+};
+
+// 飞线动画配置
+const FLYING_LINE_ANIMATION_CONFIG = {
+  tubeRadius: 0.05,        // 圆管半径
+  radialSegments: 8,       // 圆形截面分段数
+  tubularSegments: 50,     // 沿路径分段数
+  animationSpeed: 0.032,   // 动画速度
+  cycleDuration: 4.0,      // 动画周期（秒）
+  arcHeight: 0.25,         // 弧线高度系数
+  minArcHeight: 3,         // 最小弧线高度
+};
+
+// ==================== 配置区域结束 ====================
+
 const vertex = `
   #ifdef GL_ES
   precision mediump float;
@@ -334,14 +408,14 @@ const setFlyingLines = () => {
   const createCurvedPath = (start, end, segments = 60) => {
     const points = [];
     const distance = start.distanceTo(end);
-    const height = Math.max(distance * 0.25, 3); // 稍微降低弧线高度
+    const height = Math.max(distance * FLYING_LINE_ANIMATION_CONFIG.arcHeight, FLYING_LINE_ANIMATION_CONFIG.minArcHeight);
 
     // 计算控制点（弧线的最高点）
     const mid = new THREE.Vector3().addVectors(start, end).multiplyScalar(0.5);
     const controlPoint = mid
       .clone()
       .normalize()
-      .multiplyScalar(20 + height); // 使用与地球表面一致的基础半径
+      .multiplyScalar(MAP_DOTS_CONFIG.sphereRadius + height);
 
     // 生成更平滑的贝塞尔曲线点
     for (let i = 0; i <= segments; i++) {
@@ -372,20 +446,8 @@ const setFlyingLines = () => {
     return points;
   };
 
-  // 从经纬度计算3D位置 - 统一使用与地图点相同的半径
-  const latLonToVector3 = (lat, lon, radius = 20) => {
-    const phi = (90 - lat) * (Math.PI / 180);
-    const theta = (lon + 180) * (Math.PI / 180);
-
-    const x = -(radius * Math.sin(phi) * Math.cos(theta));
-    const z = radius * Math.sin(phi) * Math.sin(theta);
-    const y = radius * Math.cos(phi);
-
-    return new THREE.Vector3(x, y, z);
-  };
-
   // 计算地球表面位置（用于端点圆心） - 与地图点位置完全一致
-  const latLonToSurfaceVector3 = (lat, lon, radius = 20) => {
+  const latLonToSurfaceVector3 = (lat, lon, radius = MAP_DOTS_CONFIG.sphereRadius) => {
     const phi = (90 - lat) * (Math.PI / 180);
     const theta = (lon + 180) * (Math.PI / 180);
 
@@ -401,12 +463,12 @@ const setFlyingLines = () => {
     // 使用地球表面位置
     const surfacePosition = latLonToSurfaceVector3(latLon.lat, latLon.lon);
 
-    // 创建一个平面几何体，缩小端点大小
-    const geometry = new THREE.PlaneGeometry(0.5, 0.5);
+    // 创建一个平面几何体，使用配置的端点大小
+    const geometry = new THREE.PlaneGeometry(ENDPOINT_CONFIG.size, ENDPOINT_CONFIG.size);
 
     // 加载圆盘纹理
     const textureLoader = new THREE.TextureLoader();
-    const discTexture = textureLoader.load("img/disc_texture.png");
+    const discTexture = textureLoader.load(ENDPOINT_CONFIG.textureUrl);
 
     const material = new THREE.ShaderMaterial({
       uniforms: {
@@ -484,16 +546,12 @@ const setFlyingLines = () => {
     // 创建曲线路径
     const curve = new THREE.CatmullRomCurve3(pathPoints);
 
-    // 创建圆形管道几何体
-    const tubeRadius = 0.05; // 圆管半径，比之前的线宽更细
-    const radialSegments = 8; // 圆形截面的分段数
-    const tubularSegments = 50; // 沿路径的分段数
-
+    // 创建圆形管道几何体，使用配置参数
     const geometry = new THREE.TubeGeometry(
       curve,
-      tubularSegments,
-      tubeRadius,
-      radialSegments,
+      FLYING_LINE_ANIMATION_CONFIG.tubularSegments,
+      FLYING_LINE_ANIMATION_CONFIG.tubeRadius,
+      FLYING_LINE_ANIMATION_CONFIG.radialSegments,
       false
     );
 
@@ -503,8 +561,8 @@ const setFlyingLines = () => {
 
     for (let i = 0; i < positions.count; i++) {
       // 计算每个顶点沿管道的进度（0到1）
-      const segmentIndex = Math.floor(i / (radialSegments + 1));
-      const progress = segmentIndex / tubularSegments;
+      const segmentIndex = Math.floor(i / (FLYING_LINE_ANIMATION_CONFIG.radialSegments + 1));
+      const progress = segmentIndex / FLYING_LINE_ANIMATION_CONFIG.tubularSegments;
       progresses.push(progress);
     }
 
@@ -514,7 +572,7 @@ const setFlyingLines = () => {
     );
 
     const selectedTexture = arcTextures[textureIndex % arcTextures.length];
-    const animationPhase = Math.random() * 4.0; // 随机动画相位（0-4秒），避免所有线同时动画
+    const animationPhase = Math.random() * FLYING_LINE_ANIMATION_CONFIG.cycleDuration; // 随机动画相位，避免所有线同时动画
 
     const material = new THREE.ShaderMaterial({
       uniforms: {
@@ -543,55 +601,12 @@ const setFlyingLines = () => {
     createEndPoint(endLatLon, color);
   };
 
-  // 添加一些示例飞线
-  const routes = [
-    // 北京到纽约
-    {
-      start: { lat: 39.9042, lon: 116.4074 },
-      end: { lat: 40.7128, lon: -74.006 },
-    },
-    // 伦敦到东京
-    {
-      start: { lat: 51.5074, lon: -0.1278 },
-      end: { lat: 35.6762, lon: 139.6503 },
-    },
-    // 悉尼到洛杉矶
-    {
-      start: { lat: -33.8688, lon: 151.2093 },
-      end: { lat: 34.0522, lon: -118.2437 },
-    },
-    // 巴黎到上海
-    {
-      start: { lat: 48.8566, lon: 2.3522 },
-      end: { lat: 31.2304, lon: 121.4737 },
-    },
-    // 迪拜到新加坡
-    {
-      start: { lat: 25.2048, lon: 55.2708 },
-      end: { lat: 1.3521, lon: 103.8198 },
-    },
-    // 圣保罗到开普敦
-    {
-      start: { lat: -23.5505, lon: -46.6333 },
-      end: { lat: -33.9249, lon: 18.4241 },
-    },
-  ];
-
-  // 创建不同颜色的飞线
-  const colors = [
-    new THREE.Vector3(0.3, 0.8, 1.0), // 蓝色
-    new THREE.Vector3(1.0, 0.5, 0.3), // 橙色
-    new THREE.Vector3(0.5, 1.0, 0.3), // 绿色
-    new THREE.Vector3(1.0, 0.3, 0.8), // 粉色
-    new THREE.Vector3(0.8, 0.8, 0.3), // 黄色
-    new THREE.Vector3(0.6, 0.3, 1.0), // 紫色
-  ];
-
-  routes.forEach((route, index) => {
+  // 使用配置创建飞线
+  FLYING_LINE_ROUTES.forEach((route, index) => {
     createFlyingLine(
       route.start,
       route.end,
-      colors[index % colors.length],
+      FLYING_LINE_COLORS[index % FLYING_LINE_COLORS.length],
       index
     );
   });
@@ -599,7 +614,7 @@ const setFlyingLines = () => {
 
 const setMap = () => {
   let activeLatLon = {};
-  const dotSphereRadius = 20;
+  const dotSphereRadius = MAP_DOTS_CONFIG.sphereRadius;
 
   const readImageData = (imageData) => {
     for (let i = 0, lon = -180, lat = 90; i < imageData.length; i += 4, lon++) {
@@ -651,7 +666,7 @@ const setMap = () => {
   };
 
   const setDots = () => {
-    const dotDensity = 2.5;
+    const dotDensity = MAP_DOTS_CONFIG.dotDensity;
     let vector = new THREE.Vector3();
 
     for (let lat = 90, i = 0; lat > -90; lat--, i++) {
@@ -667,7 +682,7 @@ const setMap = () => {
 
         vector = calcPosFromLatLonRad(long, lat);
 
-        const dotGeometry = new THREE.CircleGeometry(0.1, 5);
+        const dotGeometry = new THREE.CircleGeometry(MAP_DOTS_CONFIG.dotRadius, MAP_DOTS_CONFIG.dotSegments);
         dotGeometry.lookAt(vector);
         dotGeometry.translate(vector.x, vector.y, vector.z);
 
@@ -701,7 +716,7 @@ const setMap = () => {
     setDots();
   };
 
-  image.src = "img/world_alpha_mini.jpg";
+  image.src = MAP_DOTS_CONFIG.worldTextureUrl;
 };
 
 const resize = () => {
@@ -741,7 +756,7 @@ const mousedown = () => {
 
   materials.forEach((el) => {
     gsap.to(el.uniforms.u_maxExtrusion, {
-      value: 1.07,
+      value: 1.01,
     });
   });
 
@@ -785,10 +800,10 @@ const render = () => {
     el.uniforms.u_time.value += twinkleTime;
   });
 
-  // 更新飞线动画 - 加快连接速度
+  // 更新飞线动画
   if (flyingLineMaterials) {
     flyingLineMaterials.forEach((material) => {
-      material.uniforms.time.value += 0.032; // 加快时间增量，让动画更快
+      material.uniforms.time.value += FLYING_LINE_ANIMATION_CONFIG.animationSpeed;
     });
   }
 
