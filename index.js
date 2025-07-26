@@ -269,6 +269,7 @@ const setFlyingLines = () => {
     varying float vAnimationProgress;
     varying float vAnimationPhase;
     uniform vec3 color;
+    uniform float brightness;
     uniform sampler2D arcTexture;
     uniform float time;
     
@@ -296,8 +297,10 @@ const setFlyingLines = () => {
       // 采样纹理
       vec4 textureColor = texture2D(arcTexture, dynamicUv);
       
-      // 添加边缘柔化效果
-      float edgeFade = smoothstep(0.0, 0.3, vUv.y) * smoothstep(1.0, 0.7, vUv.y);
+      // 圆形管道的边缘柔化效果 - 基于UV坐标创建圆形渐变
+      vec2 center = vec2(0.5, 0.5);
+      float distanceFromCenter = distance(vUv, center);
+      float edgeFade = 1.0 - smoothstep(0.3, 0.5, distanceFromCenter);
       
       // 创建流动的渐变效果
       float flowGradient = 1.0;
@@ -317,10 +320,10 @@ const setFlyingLines = () => {
       // 增强纹理效果
       float textureIntensity = textureColor.r;
       
-      // 结合纹理、颜色和流动渐变
-      vec3 finalColor = color * (0.3 + textureIntensity * 0.7 + flowGradient * 1.0);
+      // 结合纹理、颜色、亮度和流动渐变
+      vec3 finalColor = color * brightness * (0.3 + textureIntensity * 0.7 + flowGradient * 1.0);
       
-      // 动态透明度
+      // 动态透明度，增强圆形管道的体积感
       float finalAlpha = max(textureColor.a, 0.2) * vVisibility * edgeFade * (0.5 + flowGradient * 0.5);
       
       gl_FragColor = vec4(finalColor, finalAlpha);
@@ -465,7 +468,7 @@ const setFlyingLines = () => {
     return mesh;
   };
 
-  // 创建飞线 - 使用纹理平面
+  // 创建飞线 - 使用圆形管道几何体
   const createFlyingLine = (
     startLatLon,
     endLatLon,
@@ -478,82 +481,37 @@ const setFlyingLines = () => {
 
     const pathPoints = createCurvedPath(startPos, endPos, 50);
 
-    // 创建沿路径的平面几何体来显示纹理
-    const positions = [];
-    const uvs = [];
-    const indices = [];
+    // 创建曲线路径
+    const curve = new THREE.CatmullRomCurve3(pathPoints);
+
+    // 创建圆形管道几何体
+    const tubeRadius = 0.05; // 圆管半径，比之前的线宽更细
+    const radialSegments = 8; // 圆形截面的分段数
+    const tubularSegments = 50; // 沿路径的分段数
+
+    const geometry = new THREE.TubeGeometry(
+      curve,
+      tubularSegments,
+      tubeRadius,
+      radialSegments,
+      false
+    );
+
+    // 添加进度属性到几何体
+    const positions = geometry.attributes.position;
     const progresses = [];
 
-    const lineWidth = 0.12; // 进一步减小线宽，更接近图片中的细线效果
-
-    for (let i = 0; i < pathPoints.length - 1; i++) {
-      const currentPoint = pathPoints[i];
-      const nextPoint = pathPoints[i + 1];
-      const progress = i / (pathPoints.length - 1);
-      const nextProgress = (i + 1) / (pathPoints.length - 1);
-
-      // 计算线段方向
-      const direction = new THREE.Vector3()
-        .subVectors(nextPoint, currentPoint)
-        .normalize();
-
-      // 计算垂直于线段的向量，使用更稳定的方法
-      const up = new THREE.Vector3(0, 1, 0);
-      let perpendicular = new THREE.Vector3().crossVectors(direction, up);
-
-      // 如果方向向量与up向量平行，使用另一个参考向量
-      if (perpendicular.length() < 0.1) {
-        perpendicular = new THREE.Vector3().crossVectors(
-          direction,
-          new THREE.Vector3(1, 0, 0)
-        );
-      }
-      perpendicular.normalize();
-
-      // 创建四个顶点形成矩形，使用更小的宽度
-      const offset = perpendicular.multiplyScalar(lineWidth);
-
-      const v1 = new THREE.Vector3().addVectors(currentPoint, offset);
-      const v2 = new THREE.Vector3().subVectors(currentPoint, offset);
-      const v3 = new THREE.Vector3().addVectors(nextPoint, offset);
-      const v4 = new THREE.Vector3().subVectors(nextPoint, offset);
-
-      const baseIndex = i * 4;
-
-      // 添加顶点
-      positions.push(v1.x, v1.y, v1.z);
-      positions.push(v2.x, v2.y, v2.z);
-      positions.push(v3.x, v3.y, v3.z);
-      positions.push(v4.x, v4.y, v4.z);
-
-      // 添加UV坐标
-      uvs.push(progress, 1);
-      uvs.push(progress, 0);
-      uvs.push(nextProgress, 1);
-      uvs.push(nextProgress, 0);
-
-      // 添加进度属性
+    for (let i = 0; i < positions.count; i++) {
+      // 计算每个顶点沿管道的进度（0到1）
+      const segmentIndex = Math.floor(i / (radialSegments + 1));
+      const progress = segmentIndex / tubularSegments;
       progresses.push(progress);
-      progresses.push(progress);
-      progresses.push(nextProgress);
-      progresses.push(nextProgress);
-
-      // 添加面索引
-      indices.push(baseIndex, baseIndex + 1, baseIndex + 2);
-      indices.push(baseIndex + 1, baseIndex + 3, baseIndex + 2);
     }
 
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute(
-      "position",
-      new THREE.Float32BufferAttribute(positions, 3)
-    );
-    geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
     geometry.setAttribute(
       "progress",
       new THREE.Float32BufferAttribute(progresses, 1)
     );
-    geometry.setIndex(indices);
 
     const selectedTexture = arcTextures[textureIndex % arcTextures.length];
     const animationPhase = Math.random() * 4.0; // 随机动画相位（0-4秒），避免所有线同时动画
@@ -563,6 +521,7 @@ const setFlyingLines = () => {
         time: { value: 0 }, // 从0开始，统一时间管理
         animationPhase: { value: animationPhase },
         color: { value: color },
+        brightness: { value: 1.0 },
         arcTexture: { value: selectedTexture },
       },
       vertexShader: flyingLineVertex,
