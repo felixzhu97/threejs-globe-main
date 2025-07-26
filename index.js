@@ -296,9 +296,14 @@ const setFlyingLines = () => {
     // 创建一个平面几何体
     const geometry = new THREE.PlaneGeometry(1.5, 1.5);
 
+    // 加载圆盘纹理
+    const textureLoader = new THREE.TextureLoader();
+    const discTexture = textureLoader.load('img/disc_texture.png');
+
     const material = new THREE.ShaderMaterial({
       uniforms: {
         color: { value: color },
+        discTexture: { value: discTexture },
       },
       vertexShader: `
         #ifdef GL_ES
@@ -318,25 +323,20 @@ const setFlyingLines = () => {
         #endif
         
         uniform vec3 color;
+        uniform sampler2D discTexture;
         varying vec2 vUv;
         
         void main() {
-          vec2 center = vec2(0.5, 0.5);
-          float dist = distance(vUv, center);
+          // 采样纹理
+          vec4 textureColor = texture2D(discTexture, vUv);
           
-          if (dist > 0.5) discard;
+          // 使用纹理的alpha通道作为透明度
+          float alpha = textureColor.a;
           
-          float normalizedDist = dist * 2.0; // 0-1范围
+          // 如果完全透明则丢弃像素
+          if (alpha < 0.01) discard;
           
-          // 内圆心 - 实心
-          float innerCircle = 1.0 - smoothstep(0.0, 0.3, normalizedDist);
-          
-          // 外圆环
-          float outerRing = smoothstep(0.6, 0.7, normalizedDist) * (1.0 - smoothstep(0.9, 1.0, normalizedDist));
-          
-          // 组合两层
-          float alpha = innerCircle + outerRing * 0.8;
-          
+          // 使用传入的颜色，但保持纹理的形状和透明度
           gl_FragColor = vec4(color, alpha);
         }
       `,
