@@ -142,18 +142,28 @@ const setFlyingLines = () => {
   flyingLines = [];
   flyingLineMaterials = [];
 
-  // 飞线的顶点着色器
+  // 加载arc-texture纹理
+  const textureLoader = new THREE.TextureLoader();
+  const arcTextures = [
+    textureLoader.load('img/arc-texture-1.png'),
+    textureLoader.load('img/arc-texture-2.png'),
+    textureLoader.load('img/arc-texture-3.png'),
+    textureLoader.load('img/arc-texture-4.png')
+  ];
+
+  // 飞线的顶点着色器 - 用于纹理平面
   const flyingLineVertex = `
     attribute float progress;
-    attribute vec3 direction;
     uniform float time;
     uniform float speed;
     uniform float fadeDistance;
     
+    varying vec2 vUv;
     varying float vProgress;
     varying float vFade;
     
     void main() {
+      vUv = uv;
       vProgress = progress;
       
       // 计算飞行动画
@@ -169,62 +179,37 @@ const setFlyingLines = () => {
       vFade = fade;
       
       gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-      gl_PointSize = 3.0 * fade;
     }
   `;
 
-  // 飞线的片段着色器
+  // 飞线的片段着色器 - 使用纹理
   const flyingLineFragment = `
+    varying vec2 vUv;
     varying float vProgress;
     varying float vFade;
     uniform vec3 color;
+    uniform sampler2D arcTexture;
+    uniform float time;
+    uniform float speed;
     
     void main() {
-      float alpha = vFade * 0.8;
-      gl_FragColor = vec4(color, alpha);
+      // 采样纹理
+      vec4 textureColor = texture2D(arcTexture, vUv);
+      
+      // 创建流动效果
+      float flowOffset = mod(time * speed * 2.0, 1.0);
+      float flowMask = smoothstep(0.0, 0.3, mod(vUv.x + flowOffset, 1.0)) * 
+                       smoothstep(0.7, 1.0, mod(vUv.x + flowOffset, 1.0));
+      
+      // 结合纹理和颜色
+      vec3 finalColor = mix(textureColor.rgb, color, 0.5);
+      float alpha = textureColor.a * vFade * (0.6 + flowMask * 0.4);
+      
+      gl_FragColor = vec4(finalColor, alpha);
     }
   `;
 
-  // 端点标记的顶点着色器
-  const endPointVertex = `
-    #ifdef GL_ES
-    precision mediump float;
-    #endif
-    
-    void main() {
-      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-      gl_PointSize = 20.0;
-    }
-  `;
 
-  // 端点标记的片段着色器 - 圆心和圆环
-  const endPointFragment = `
-    #ifdef GL_ES
-    precision mediump float;
-    #endif
-    
-    uniform vec3 color;
-    
-    void main() {
-      vec2 center = vec2(0.5, 0.5);
-      float dist = distance(gl_PointCoord, center);
-      
-      if (dist > 0.5) discard;
-      
-      float normalizedDist = dist * 2.0; // 0-1范围
-      
-      // 内圆心 - 实心
-      float innerCircle = 1.0 - smoothstep(0.0, 0.3, normalizedDist);
-      
-      // 外圆环
-      float outerRing = smoothstep(0.6, 0.7, normalizedDist) * (1.0 - smoothstep(0.9, 1.0, normalizedDist));
-      
-      // 组合两层
-      float alpha = innerCircle + outerRing * 0.8;
-      
-      gl_FragColor = vec4(color, alpha);
-    }
-  `;
 
   // 计算两点间的贝塞尔曲线路径
   const createCurvedPath = (start, end, segments = 50) => {
@@ -289,7 +274,7 @@ const setFlyingLines = () => {
   };
 
   // 创建端点标记 - 贴在地球表面
-  const createEndPoint = (latLon, color, cycleTime) => {
+  const createEndPoint = (latLon, color) => {
     // 使用地球表面位置
     const surfacePosition = latLonToSurfaceVector3(latLon.lat, latLon.lon);
 
@@ -360,60 +345,106 @@ const setFlyingLines = () => {
     return mesh;
   };
 
-  // 创建飞线
+  // 创建飞线 - 使用纹理平面
   const createFlyingLine = (
     startLatLon,
     endLatLon,
-    color = new THREE.Vector3(0.3, 0.8, 1.0)
+    color = new THREE.Vector3(0.3, 0.8, 1.0),
+    textureIndex = 0
   ) => {
     const startPos = latLonToVector3(startLatLon.lat, startLatLon.lon);
     const endPos = latLonToVector3(endLatLon.lat, endLatLon.lon);
 
-    const pathPoints = createCurvedPath(startPos, endPos, 60);
-    const geometry = new THREE.BufferGeometry();
-
+    const pathPoints = createCurvedPath(startPos, endPos, 50);
+    
+    // 创建沿路径的平面几何体来显示纹理
     const positions = [];
+    const uvs = [];
+    const indices = [];
     const progresses = [];
 
-    pathPoints.forEach((point, index) => {
-      positions.push(point.x, point.y, point.z);
-      progresses.push(index / (pathPoints.length - 1));
-    });
+    const lineWidth = 0.3;
 
-    geometry.setAttribute(
-      "position",
-      new THREE.Float32BufferAttribute(positions, 3)
-    );
-    geometry.setAttribute(
-      "progress",
-      new THREE.Float32BufferAttribute(progresses, 1)
-    );
+    for (let i = 0; i < pathPoints.length - 1; i++) {
+      const currentPoint = pathPoints[i];
+      const nextPoint = pathPoints[i + 1];
+      const progress = i / (pathPoints.length - 1);
+      const nextProgress = (i + 1) / (pathPoints.length - 1);
+      
+      // 计算线段方向
+      const direction = new THREE.Vector3().subVectors(nextPoint, currentPoint).normalize();
+      
+      // 计算垂直于线段和相机方向的向量
+      const cameraDirection = new THREE.Vector3().subVectors(currentPoint, camera.position).normalize();
+      const perpendicular = new THREE.Vector3().crossVectors(direction, cameraDirection).normalize();
+      
+      // 创建四个顶点形成矩形
+      const offset = perpendicular.multiplyScalar(lineWidth);
+      
+      const v1 = new THREE.Vector3().addVectors(currentPoint, offset);
+      const v2 = new THREE.Vector3().subVectors(currentPoint, offset);
+      const v3 = new THREE.Vector3().addVectors(nextPoint, offset);
+      const v4 = new THREE.Vector3().subVectors(nextPoint, offset);
 
-    const speed = 0.5 + Math.random() * 0.5;
-    const cycleTime = 2.0 / speed; // 飞线完成一个循环的时间
+      const baseIndex = i * 4;
+      
+      // 添加顶点
+      positions.push(v1.x, v1.y, v1.z);
+      positions.push(v2.x, v2.y, v2.z);
+      positions.push(v3.x, v3.y, v3.z);
+      positions.push(v4.x, v4.y, v4.z);
+      
+      // 添加UV坐标
+      uvs.push(progress, 1);
+      uvs.push(progress, 0);
+      uvs.push(nextProgress, 1);
+      uvs.push(nextProgress, 0);
+      
+      // 添加进度属性
+      progresses.push(progress);
+      progresses.push(progress);
+      progresses.push(nextProgress);
+      progresses.push(nextProgress);
+      
+      // 添加面索引
+      indices.push(baseIndex, baseIndex + 1, baseIndex + 2);
+      indices.push(baseIndex + 1, baseIndex + 3, baseIndex + 2);
+    }
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    geometry.setAttribute('progress', new THREE.Float32BufferAttribute(progresses, 1));
+    geometry.setIndex(indices);
+
+    const speed = 0.3 + Math.random() * 0.4;
+    const selectedTexture = arcTextures[textureIndex % arcTextures.length];
 
     const material = new THREE.ShaderMaterial({
       uniforms: {
         time: { value: Math.random() * 10 },
         speed: { value: speed },
-        fadeDistance: { value: 0.1 },
+        fadeDistance: { value: 0.15 },
         color: { value: color },
+        arcTexture: { value: selectedTexture },
       },
       vertexShader: flyingLineVertex,
       fragmentShader: flyingLineFragment,
       transparent: true,
       blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+      depthWrite: false,
     });
 
     flyingLineMaterials.push(material);
 
-    const line = new THREE.Points(geometry, material);
+    const line = new THREE.Mesh(geometry, material);
     scene.add(line);
     flyingLines.push(line);
 
     // 创建起点和终点的标记
-    createEndPoint(startLatLon, color, cycleTime);
-    createEndPoint(endLatLon, color, cycleTime);
+    createEndPoint(startLatLon, color);
+    createEndPoint(endLatLon, color);
   };
 
   // 添加一些示例飞线
@@ -461,7 +492,7 @@ const setFlyingLines = () => {
   ];
 
   routes.forEach((route, index) => {
-    createFlyingLine(route.start, route.end, colors[index % colors.length]);
+    createFlyingLine(route.start, route.end, colors[index % colors.length], index);
   });
 };
 
