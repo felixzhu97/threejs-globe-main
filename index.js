@@ -100,14 +100,23 @@ const fragment = `
 
   uniform float u_time;
 
-  vec3 colorA = vec3(0.196, 0.631, 0.886);
-  vec3 colorB = vec3(0.192, 0.384, 0.498);
+  // 科技感配色方案 - 青蓝色调
+  vec3 colorA = vec3(0.0, 0.8, 1.0);    // 明亮的青色
+  vec3 colorB = vec3(0.0, 0.4, 0.8);    // 深蓝色
+  vec3 colorC = vec3(0.2, 1.0, 0.8);    // 青绿色
 
   void main() {
 
     vec3  color = vec3(0.0);
-    float pct   = abs(sin(u_time));
-          color = mix(colorA, colorB, pct);
+    float pct1  = abs(sin(u_time));
+    float pct2  = abs(sin(u_time * 0.7 + 1.57)); // 相位偏移
+    
+    // 三色混合创造更丰富的科技感效果
+    color = mix(colorA, colorB, pct1);
+    color = mix(color, colorC, pct2 * 0.3);
+    
+    // 增加亮度和对比度
+    color *= 1.2;
 
     gl_FragColor = vec4(color, 1.0);
 
@@ -190,9 +199,13 @@ const setControls = () => {
 const setBaseSphere = () => {
   const baseSphere = new THREE.SphereGeometry(19.5, 35, 35);
   const baseMaterial = new THREE.MeshStandardMaterial({
-    color: 0x0b2636,
+    color: 0x001122, // 深蓝黑色，更有科技感
     transparent: true,
-    opacity: 0.9,
+    opacity: 0.85,
+    metalness: 0.3, // 增加金属质感
+    roughness: 0.7,
+    emissive: 0x002244, // 微弱的自发光效果
+    emissiveIntensity: 0.1,
   });
   baseMesh = new THREE.Mesh(baseSphere, baseMaterial);
   scene.add(baseMesh);
