@@ -49,28 +49,28 @@ const FLYING_LINE_COLORS = [
 
 // 圆心点配置
 const ENDPOINT_CONFIG = {
-  size: 0.5,           // 端点大小
+  size: 0.5, // 端点大小
   textureUrl: "img/disc_texture.png", // 端点纹理
 };
 
 // 地图点配置
 const MAP_DOTS_CONFIG = {
-  sphereRadius: 20,    // 地球半径
-  dotRadius: 0.1,      // 地图点半径
-  dotSegments: 5,      // 地图点分段数
-  dotDensity: 2.5,     // 地图点密度
+  sphereRadius: 20, // 地球半径
+  dotRadius: 0.1, // 地图点半径
+  dotSegments: 5, // 地图点分段数
+  dotDensity: 2.5, // 地图点密度
   worldTextureUrl: "img/world_alpha_mini.jpg", // 世界地图纹理
 };
 
 // 飞线动画配置
 const FLYING_LINE_ANIMATION_CONFIG = {
-  tubeRadius: 0.05,        // 圆管半径
-  radialSegments: 8,       // 圆形截面分段数
-  tubularSegments: 50,     // 沿路径分段数
-  animationSpeed: 0.032,   // 动画速度
-  cycleDuration: 4.0,      // 动画周期（秒）
-  arcHeight: 0.25,         // 弧线高度系数
-  minArcHeight: 3,         // 最小弧线高度
+  tubeRadius: 0.05, // 圆管半径
+  radialSegments: 8, // 圆形截面分段数
+  tubularSegments: 50, // 沿路径分段数
+  animationSpeed: 0.032, // 动画速度
+  cycleDuration: 4.0, // 动画周期（秒）
+  arcHeight: 0.25, // 弧线高度系数
+  minArcHeight: 3, // 最小弧线高度
 };
 
 // ==================== 配置区域结束 ====================
@@ -229,19 +229,19 @@ const setFlyingLines = () => {
   flyingLines = [];
   flyingLineMaterials = [];
 
-  // 创建程序化纹理作为备用
+  // 创建程序化纹理作为备用 - 不透明版本
   const createGradientTexture = () => {
     const canvas = document.createElement("canvas");
     canvas.width = 256;
     canvas.height = 32;
     const ctx = canvas.getContext("2d");
 
-    // 创建渐变
+    // 创建不透明的渐变
     const gradient = ctx.createLinearGradient(0, 0, 256, 0);
-    gradient.addColorStop(0, "rgba(255, 255, 255, 0)");
-    gradient.addColorStop(0.3, "rgba(255, 255, 255, 0.8)");
-    gradient.addColorStop(0.7, "rgba(255, 255, 255, 0.8)");
-    gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
+    gradient.addColorStop(0, "rgba(255, 255, 255, 1.0)");
+    gradient.addColorStop(0.3, "rgba(255, 255, 255, 1.0)");
+    gradient.addColorStop(0.7, "rgba(255, 255, 255, 1.0)");
+    gradient.addColorStop(1, "rgba(255, 255, 255, 1.0)");
 
     ctx.fillStyle = gradient;
     ctx.fillRect(0, 0, 256, 32);
@@ -314,29 +314,31 @@ const setFlyingLines = () => {
         animationProgress = cycle / 1.0; // 0到1
         phase = 0.0;
         if (progress <= animationProgress) {
-          visibility = 1.0;
-          // 头部渐变效果，让线条前端有柔和的渐变
-          float headDistance = animationProgress - progress;
-          float headFade = 1.0 - smoothstep(0.0, 0.1, headDistance);
-          visibility *= (0.6 + headFade * 0.8); // 基础亮度0.6，头部最亮1.4
+          visibility = 1.0; // 保持完全不透明，不添加头部渐变
         }
       } else if (cycle < 3.0) {
         // 第二阶段：保持完整连接状态（1-3秒，持续2秒）
         animationProgress = 1.0; // 保持完整状态
         phase = 1.0;
         visibility = 1.0; // 整条线都可见
-        // 在停留阶段保持均匀亮度
-        visibility *= 0.8; // 稍微降低亮度，表示稳定状态
+        
+        // 在停留阶段保持持续的渐变动画
+        float stayTime = cycle - 1.0; // 停留阶段的时间（0-2秒）
+        float pulseFreq = 2.0; // 脉冲频率
+        float pulse = 0.5 + 0.3 * sin(stayTime * pulseFreq * 3.14159); // 0.2-0.8之间的脉冲
+        
+        // 添加沿线条的流动渐变效果
+        float flowSpeed = 1.5; // 流动速度
+        float flowOffset = mod(stayTime * flowSpeed, 1.0); // 0-1循环的偏移
+        float flowGradient = 0.5 + 0.5 * sin((progress + flowOffset) * 6.28318); // 沿线条的正弦波
+        
+        visibility *= (0.7 + pulse * 0.3 + flowGradient * 0.2); // 组合脉冲和流动效果
       } else {
         // 第三阶段：从起点收回到终点（3-4秒）
         animationProgress = (cycle - 3.0) / 1.0; // 0到1，表示收回的进度
         phase = 2.0;
         if (progress >= animationProgress) {
-          visibility = 1.0;
-          // 收回前端的渐变效果
-          float retractDistance = progress - animationProgress;
-          float retractFade = 1.0 - smoothstep(0.0, 0.1, retractDistance);
-          visibility *= (0.6 + retractFade * 0.8); // 基础亮度0.6，收回前端最亮1.4
+          visibility = 1.0; // 保持完全不透明，不添加收回渐变
         }
       }
       
@@ -372,9 +374,15 @@ const setFlyingLines = () => {
         float textureOffset = vAnimationProgress - 0.3; // 纹理稍微滞后于动画前端
         dynamicUv.x = (vUv.x - textureOffset) * 3.0; // 拉伸纹理，让渐变更明显
       } else if (vAnimationPhase < 1.5) {
-        // 停留阶段：纹理保持稳定流动
-        float textureOffset = time * 0.1; // 缓慢流动
-        dynamicUv.x = vUv.x + textureOffset;
+        // 停留阶段：纹理保持动态流动，增强渐变效果
+        float flowSpeed = 0.3; // 增加流动速度
+        float textureOffset = time * flowSpeed;
+        
+        // 添加双向流动效果，创造更丰富的渐变
+        float wave1 = sin(time * 2.0 + vProgress * 6.28318) * 0.1;
+        float wave2 = cos(time * 1.5 - vProgress * 4.0) * 0.05;
+        
+        dynamicUv.x = vUv.x + textureOffset + wave1 + wave2;
       } else {
         // 收回阶段：纹理跟随收回前端移动
         float textureOffset = vAnimationProgress + 0.3; // 纹理稍微超前于收回前端
@@ -384,34 +392,40 @@ const setFlyingLines = () => {
       // 采样纹理
       vec4 textureColor = texture2D(arcTexture, dynamicUv);
       
-      // 圆形管道的边缘柔化效果 - 基于UV坐标创建圆形渐变
-      vec2 center = vec2(0.5, 0.5);
-      float distanceFromCenter = distance(vUv, center);
-      float edgeFade = 1.0 - smoothstep(0.3, 0.5, distanceFromCenter);
+      // 圆形管道的边缘柔化效果 - 只在径向方向柔化，不影响首尾
+      float radialDistance = abs(vUv.y - 0.5) * 2.0; // 0到1，表示距离管道中心轴的距离
+      float edgeFade = 1.0 - smoothstep(0.6, 1.0, radialDistance); // 只在管道边缘柔化
       
       // 创建流动的渐变效果
       float flowGradient = 1.0;
       if (vAnimationPhase < 0.5) {
-        // 延伸阶段：从起点到当前动画位置的渐变
-        float distanceFromHead = abs(vProgress - vAnimationProgress);
-        flowGradient = 1.0 - smoothstep(0.0, 0.2, distanceFromHead);
+        // 延伸阶段：保持均匀亮度，不添加头部渐变
+        flowGradient = 1.0;
       } else if (vAnimationPhase < 1.5) {
-        // 停留阶段：整条线保持稳定亮度
-        flowGradient = 0.8; // 稳定的亮度
+        // 停留阶段：保持动态渐变效果
+        float stayTime = time * 0.5; // 控制停留阶段的动画速度
+        
+        // 创建沿线条流动的渐变波
+        float wave1 = 0.6 + 0.4 * sin(stayTime * 3.0 + vProgress * 8.0);
+        float wave2 = 0.5 + 0.3 * cos(stayTime * 2.0 - vProgress * 5.0);
+        
+        // 添加整体的呼吸效果
+        float breathe = 0.8 + 0.2 * sin(stayTime * 1.5);
+        
+        flowGradient = (wave1 + wave2) * 0.5 * breathe;
       } else {
-        // 收回阶段：从收回前端到终点的渐变
-        float distanceFromTail = abs(vProgress - vAnimationProgress);
-        flowGradient = 1.0 - smoothstep(0.0, 0.2, distanceFromTail);
+        // 收回阶段：保持均匀亮度，不添加尾部渐变
+        flowGradient = 1.0;
       }
       
-      // 增强纹理效果
+      // 增强纹理效果 - 不依赖透明度
       float textureIntensity = textureColor.r;
       
-      // 结合纹理、颜色、亮度和流动渐变
-      vec3 finalColor = color * brightness * (0.3 + textureIntensity * 0.7 + flowGradient * 1.0);
+      // 结合纹理、颜色、亮度和流动渐变，创造不透明的效果
+      vec3 finalColor = color * brightness * (0.5 + textureIntensity * 0.5 + flowGradient * 0.8);
       
-      // 动态透明度，增强圆形管道的体积感
-      float finalAlpha = max(textureColor.a, 0.2) * vVisibility * edgeFade * (0.5 + flowGradient * 0.5);
+      // 设置为不透明，只保留可见性控制
+      float finalAlpha = vVisibility * edgeFade;
       
       gl_FragColor = vec4(finalColor, finalAlpha);
     }
@@ -421,7 +435,10 @@ const setFlyingLines = () => {
   const createCurvedPath = (start, end, segments = 60) => {
     const points = [];
     const distance = start.distanceTo(end);
-    const height = Math.max(distance * FLYING_LINE_ANIMATION_CONFIG.arcHeight, FLYING_LINE_ANIMATION_CONFIG.minArcHeight);
+    const height = Math.max(
+      distance * FLYING_LINE_ANIMATION_CONFIG.arcHeight,
+      FLYING_LINE_ANIMATION_CONFIG.minArcHeight
+    );
 
     // 计算控制点（弧线的最高点）
     const mid = new THREE.Vector3().addVectors(start, end).multiplyScalar(0.5);
@@ -460,7 +477,11 @@ const setFlyingLines = () => {
   };
 
   // 计算地球表面位置（用于端点圆心） - 与地图点位置完全一致
-  const latLonToSurfaceVector3 = (lat, lon, radius = MAP_DOTS_CONFIG.sphereRadius) => {
+  const latLonToSurfaceVector3 = (
+    lat,
+    lon,
+    radius = MAP_DOTS_CONFIG.sphereRadius
+  ) => {
     const phi = (90 - lat) * (Math.PI / 180);
     const theta = (lon + 180) * (Math.PI / 180);
 
@@ -477,7 +498,10 @@ const setFlyingLines = () => {
     const surfacePosition = latLonToSurfaceVector3(latLon.lat, latLon.lon);
 
     // 创建一个平面几何体，使用配置的端点大小
-    const geometry = new THREE.PlaneGeometry(ENDPOINT_CONFIG.size, ENDPOINT_CONFIG.size);
+    const geometry = new THREE.PlaneGeometry(
+      ENDPOINT_CONFIG.size,
+      ENDPOINT_CONFIG.size
+    );
 
     // 加载圆盘纹理
     const textureLoader = new THREE.TextureLoader();
@@ -574,8 +598,11 @@ const setFlyingLines = () => {
 
     for (let i = 0; i < positions.count; i++) {
       // 计算每个顶点沿管道的进度（0到1）
-      const segmentIndex = Math.floor(i / (FLYING_LINE_ANIMATION_CONFIG.radialSegments + 1));
-      const progress = segmentIndex / FLYING_LINE_ANIMATION_CONFIG.tubularSegments;
+      const segmentIndex = Math.floor(
+        i / (FLYING_LINE_ANIMATION_CONFIG.radialSegments + 1)
+      );
+      const progress =
+        segmentIndex / FLYING_LINE_ANIMATION_CONFIG.tubularSegments;
       progresses.push(progress);
     }
 
@@ -585,7 +612,8 @@ const setFlyingLines = () => {
     );
 
     const selectedTexture = arcTextures[textureIndex % arcTextures.length];
-    const animationPhase = Math.random() * FLYING_LINE_ANIMATION_CONFIG.cycleDuration; // 随机动画相位，避免所有线同时动画
+    const animationPhase =
+      Math.random() * FLYING_LINE_ANIMATION_CONFIG.cycleDuration; // 随机动画相位，避免所有线同时动画
 
     const material = new THREE.ShaderMaterial({
       uniforms: {
@@ -695,7 +723,10 @@ const setMap = () => {
 
         vector = calcPosFromLatLonRad(long, lat);
 
-        const dotGeometry = new THREE.CircleGeometry(MAP_DOTS_CONFIG.dotRadius, MAP_DOTS_CONFIG.dotSegments);
+        const dotGeometry = new THREE.CircleGeometry(
+          MAP_DOTS_CONFIG.dotRadius,
+          MAP_DOTS_CONFIG.dotSegments
+        );
         dotGeometry.lookAt(vector);
         dotGeometry.translate(vector.x, vector.y, vector.z);
 
@@ -816,7 +847,8 @@ const render = () => {
   // 更新飞线动画
   if (flyingLineMaterials) {
     flyingLineMaterials.forEach((material) => {
-      material.uniforms.time.value += FLYING_LINE_ANIMATION_CONFIG.animationSpeed;
+      material.uniforms.time.value +=
+        FLYING_LINE_ANIMATION_CONFIG.animationSpeed;
     });
   }
 
