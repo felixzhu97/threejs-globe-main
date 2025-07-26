@@ -185,6 +185,55 @@ const setFlyingLines = () => {
     }
   `;
 
+  // 端点圆心的顶点着色器
+  const endPointVertex = `
+    #ifdef GL_ES
+    precision mediump float;
+    #endif
+    
+    uniform float time;
+    uniform float cycleTime;
+    uniform float opacity;
+    
+    varying float vOpacity;
+    
+    void main() {
+      // 计算循环透明度 - 简化逻辑确保可见性
+      float cycle = mod(time * 0.5, cycleTime);
+      float normalizedCycle = cycle / cycleTime;
+      
+      // 创建脉冲效果
+      float pulse = sin(normalizedCycle * 6.28318) * 0.5 + 0.5;
+      vOpacity = opacity * (0.3 + pulse * 0.7);
+      
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      gl_PointSize = 12.0;
+    }
+  `;
+
+  // 端点圆心的片段着色器
+  const endPointFragment = `
+    #ifdef GL_ES
+    precision mediump float;
+    #endif
+    
+    uniform vec3 color;
+    varying float vOpacity;
+    
+    void main() {
+      vec2 center = vec2(0.5, 0.5);
+      float dist = distance(gl_PointCoord, center);
+      
+      if (dist > 0.5) discard;
+      
+      // 创建渐变圆形效果
+      float alpha = (1.0 - dist * 2.0) * vOpacity;
+      alpha = smoothstep(0.0, 1.0, alpha);
+      
+      gl_FragColor = vec4(color, alpha);
+    }
+  `;
+
   // 计算两点间的贝塞尔曲线路径
   const createCurvedPath = (start, end, segments = 50) => {
     const points = [];
@@ -235,6 +284,37 @@ const setFlyingLines = () => {
     return new THREE.Vector3(x, y, z);
   };
 
+  // 创建端点圆心
+  const createEndPoint = (position, color, cycleTime) => {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute(
+      "position",
+      new THREE.Float32BufferAttribute([position.x, position.y, position.z], 3)
+    );
+
+    const material = new THREE.ShaderMaterial({
+      uniforms: {
+        time: { value: 0 },
+        cycleTime: { value: cycleTime || 4.0 },
+        opacity: { value: 1.0 },
+        color: { value: color },
+      },
+      vertexShader: endPointVertex,
+      fragmentShader: endPointFragment,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+
+    flyingLineMaterials.push(material);
+
+    const point = new THREE.Points(geometry, material);
+    scene.add(point);
+    flyingLines.push(point);
+
+    return point;
+  };
+
   // 创建飞线
   const createFlyingLine = (
     startLatLon,
@@ -264,10 +344,13 @@ const setFlyingLines = () => {
       new THREE.Float32BufferAttribute(progresses, 1)
     );
 
+    const speed = 0.5 + Math.random() * 0.5;
+    const cycleTime = 2.0 / speed; // 飞线完成一个循环的时间
+
     const material = new THREE.ShaderMaterial({
       uniforms: {
         time: { value: Math.random() * 10 },
-        speed: { value: 0.5 + Math.random() * 0.5 },
+        speed: { value: speed },
         fadeDistance: { value: 0.1 },
         color: { value: color },
       },
@@ -282,6 +365,10 @@ const setFlyingLines = () => {
     const line = new THREE.Points(geometry, material);
     scene.add(line);
     flyingLines.push(line);
+
+    // 创建起点和终点的圆心
+    createEndPoint(startPos, color, cycleTime);
+    createEndPoint(endPos, color, cycleTime);
   };
 
   // 添加一些示例飞线
@@ -521,7 +608,7 @@ const render = () => {
     el.uniforms.u_time.value += twinkleTime;
   });
 
-  // 更新飞线动画
+  // 更新飞线和端点动画
   if (flyingLineMaterials) {
     flyingLineMaterials.forEach((material) => {
       material.uniforms.time.value += 0.01;
