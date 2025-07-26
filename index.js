@@ -214,17 +214,17 @@ const setFlyingLines = () => {
       vUv = uv;
       vProgress = progress;
       
-      // 计算动画周期，每个周期6秒（3秒延伸 + 3秒收回）
-      float cycleDuration = 6.0;
+      // 计算动画周期，每个周期4秒（1秒延伸 + 2秒停留 + 1秒收回）
+      float cycleDuration = 4.0;
       float cycle = mod(time + animationPhase, cycleDuration);
       
       float visibility = 0.0;
       float animationProgress = 0.0;
-      float phase = 0.0; // 0 = 延伸阶段, 1 = 收回阶段
+      float phase = 0.0; // 0 = 延伸阶段, 1 = 停留阶段, 2 = 收回阶段
       
-      if (cycle < 3.0) {
-        // 第一阶段：从起点延伸到终点（0-3秒）
-        animationProgress = cycle / 3.0; // 0到1
+      if (cycle < 1.0) {
+        // 第一阶段：从起点延伸到终点（0-1秒）
+        animationProgress = cycle / 1.0; // 0到1
         phase = 0.0;
         if (progress <= animationProgress) {
           visibility = 1.0;
@@ -233,10 +233,17 @@ const setFlyingLines = () => {
           float headFade = 1.0 - smoothstep(0.0, 0.1, headDistance);
           visibility *= (0.6 + headFade * 0.8); // 基础亮度0.6，头部最亮1.4
         }
-      } else {
-        // 第二阶段：保持连接状态，从起点收回到终点（3-6秒）
-        animationProgress = (cycle - 3.0) / 3.0; // 0到1，表示收回的进度
+      } else if (cycle < 3.0) {
+        // 第二阶段：保持完整连接状态（1-3秒，持续2秒）
+        animationProgress = 1.0; // 保持完整状态
         phase = 1.0;
+        visibility = 1.0; // 整条线都可见
+        // 在停留阶段保持均匀亮度
+        visibility *= 0.8; // 稍微降低亮度，表示稳定状态
+      } else {
+        // 第三阶段：从起点收回到终点（3-4秒）
+        animationProgress = (cycle - 3.0) / 1.0; // 0到1，表示收回的进度
+        phase = 2.0;
         if (progress >= animationProgress) {
           visibility = 1.0;
           // 收回前端的渐变效果
@@ -276,6 +283,10 @@ const setFlyingLines = () => {
         // 延伸阶段：纹理跟随动画前端移动
         float textureOffset = vAnimationProgress - 0.3; // 纹理稍微滞后于动画前端
         dynamicUv.x = (vUv.x - textureOffset) * 3.0; // 拉伸纹理，让渐变更明显
+      } else if (vAnimationPhase < 1.5) {
+        // 停留阶段：纹理保持稳定流动
+        float textureOffset = time * 0.1; // 缓慢流动
+        dynamicUv.x = vUv.x + textureOffset;
       } else {
         // 收回阶段：纹理跟随收回前端移动
         float textureOffset = vAnimationProgress + 0.3; // 纹理稍微超前于收回前端
@@ -294,6 +305,9 @@ const setFlyingLines = () => {
         // 延伸阶段：从起点到当前动画位置的渐变
         float distanceFromHead = abs(vProgress - vAnimationProgress);
         flowGradient = 1.0 - smoothstep(0.0, 0.2, distanceFromHead);
+      } else if (vAnimationPhase < 1.5) {
+        // 停留阶段：整条线保持稳定亮度
+        flowGradient = 0.8; // 稳定的亮度
       } else {
         // 收回阶段：从收回前端到终点的渐变
         float distanceFromTail = abs(vProgress - vAnimationProgress);
@@ -542,7 +556,7 @@ const setFlyingLines = () => {
     geometry.setIndex(indices);
 
     const selectedTexture = arcTextures[textureIndex % arcTextures.length];
-    const animationPhase = Math.random() * 6.0; // 随机动画相位（0-6秒），避免所有线同时动画
+    const animationPhase = Math.random() * 4.0; // 随机动画相位（0-4秒），避免所有线同时动画
 
     const material = new THREE.ShaderMaterial({
       uniforms: {
