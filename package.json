@@ -3,11 +3,14 @@
   "version": "1.0.0",
   "type": "module",
   "description": "3D Globe with flying lines using Three.js",
-  "main": "index.js",
+  "main": "public/index.html",
   "scripts": {
-    "start": "python -m http.server 8000",
-    "dev": "python -m http.server 8000"
+    "build": "echo 'Static site - no build needed'",
+    "start": "serve public",
+    "dev": "serve public"
   },
   "dependencies": {},
-  "devDependencies": {}
+  "devDependencies": {
+    "serve": "^14.2.0"
+  }
 }
