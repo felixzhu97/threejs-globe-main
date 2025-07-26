@@ -398,8 +398,8 @@ const setFlyingLines = () => {
     // 使用地球表面位置
     const surfacePosition = latLonToSurfaceVector3(latLon.lat, latLon.lon);
 
-    // 创建一个平面几何体
-    const geometry = new THREE.PlaneGeometry(1.5, 1.5);
+    // 创建一个平面几何体，缩小端点大小
+    const geometry = new THREE.PlaneGeometry(0.5, 0.5);
 
     // 加载圆盘纹理
     const textureLoader = new THREE.TextureLoader();
